@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from organizer.classifier import classify_extension, classify_file
+from organizer.classifier import classify_extension, classify_file, classify_filename
 
 
 def test_documents_category():
@@ -72,3 +72,82 @@ def test_classifier_does_not_touch_filesystem(tmp_path):
     missing_file = tmp_path / "does_not_exist.pdf"
     assert classify_file(missing_file) == "Documents"
     assert not missing_file.exists()
+
+
+def test_statement_filename_rule_classifies_as_finance():
+    assert classify_file(Path("WellsFargo_Statement_August.pdf")) == "Finance"
+    assert classify_file(Path("bank_statement.pdf")) == "Finance"
+
+
+def test_invoice_filename_rule_classifies_as_finance():
+    assert classify_file(Path("UNC_Tuition_Invoice.pdf")) == "Finance"
+
+
+def test_receipt_filename_rule_classifies_as_finance():
+    assert classify_file(Path("store_receipt.pdf")) == "Finance"
+
+
+def test_homework_filename_rule_classifies_as_school():
+    assert classify_file(Path("math_homework.docx")) == "School"
+
+
+def test_assignment_filename_rule_classifies_as_school():
+    assert classify_file(Path("essay_assignment.docx")) == "School"
+
+
+def test_tuition_filename_rule_classifies_as_school():
+    assert classify_file(Path("tuition_reminder.pdf")) == "School"
+    assert classify_filename("fall_tuition_plan.pdf") == "School"
+
+
+def test_resume_filename_rule_classifies_as_resumes():
+    assert classify_file(Path("resume_joseph.pdf")) == "Resumes"
+    assert classify_file(Path("resume_final.docx")) == "Resumes"
+
+
+def test_cv_filename_rule_classifies_as_resumes():
+    assert classify_file(Path("my_cv.pdf")) == "Resumes"
+
+
+def test_filename_rule_matching_is_case_insensitive():
+    assert classify_file(Path("BANK_STATEMENT.PDF")) == "Finance"
+    assert classify_file(Path("Resume_Final.DOCX")) == "Resumes"
+
+
+def test_filename_rules_override_extension_classification():
+    # vacation_invoice_photo.jpg would classify as Images by extension,
+    # but the "*invoice*" filename rule takes precedence.
+    assert classify_file(Path("vacation_invoice_photo.jpg")) == "Finance"
+
+
+def test_extension_classification_still_works_when_no_filename_rule_matches():
+    assert classify_file(Path("photo.jpg")) == "Images"
+
+
+def test_unknown_file_still_returns_other():
+    assert classify_file(Path("unknown.xyz")) == "Other"
+
+
+def test_multiple_matching_filename_rules_use_first_match_priority():
+    # "statement" and "invoice" both appear; "*statement*" is listed
+    # first in FILENAME_RULES, so it wins even though "*invoice*" also
+    # matches. This documents the deterministic first-match policy.
+    assert classify_filename("invoice_statement_combo.pdf") == "Finance"
+
+
+def test_tuition_invoice_follows_documented_rule_order():
+    # "*invoice*" (Finance) is listed before "*tuition*" (School) in
+    # FILENAME_RULES, so a filename matching both resolves to Finance.
+    assert classify_file(Path("tuition_invoice.pdf")) == "Finance"
+
+
+def test_filename_rules_match_filename_only_not_parent_directory():
+    # The parent directory is named "Finance", but the filename itself
+    # ("photo.jpg") matches no filename rule, so it must still fall
+    # back to extension-based classification (Images), not inherit
+    # "Finance" from the directory name.
+    assert classify_file(Path("Finance") / "photo.jpg") == "Images"
+
+
+def test_classify_filename_returns_none_when_no_rule_matches():
+    assert classify_filename("photo.jpg") is None

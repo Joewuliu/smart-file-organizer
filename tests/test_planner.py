@@ -14,6 +14,19 @@ def test_pdf_plans_to_documents(tmp_path):
     assert move.destination == tmp_path / "Documents" / "report.pdf"
 
 
+def test_filename_rule_flows_through_to_planner(tmp_path):
+    # planner.py performs no filename/extension logic itself; it only
+    # calls classify_file(). This proves the classifier's filename-rule
+    # precedence (added for Milestone 6) is picked up automatically.
+    file = tmp_path / "bank_statement.pdf"
+    file.write_text("data")
+
+    [move] = plan_moves([file], tmp_path)
+
+    assert move.category == "Finance"
+    assert move.destination == tmp_path / "Finance" / "bank_statement.pdf"
+
+
 def test_jpg_plans_to_images(tmp_path):
     file = tmp_path / "photo.jpg"
     file.write_text("data")
