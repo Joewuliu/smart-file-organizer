@@ -9,6 +9,15 @@ def _make_files(tmp_path, names):
         (tmp_path / name).write_text(name)
 
 
+def test_help_usage_shows_installed_command_name(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--help"])
+
+    out = capsys.readouterr().out
+    assert exc_info.value.code == 0
+    assert "usage: smart-organizer" in out
+
+
 def test_dry_run_is_default_and_makes_no_changes(tmp_path, capsys):
     _make_files(tmp_path, ["report.pdf", "photo.jpg"])
 

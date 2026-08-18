@@ -10,7 +10,7 @@ from organizer.scanner import scan_directory
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="python -m organizer.cli",
+        prog="smart-organizer",
         description="Organize files in a directory by file type.",
     )
     parser.add_argument("directory", help="Directory to organize")
