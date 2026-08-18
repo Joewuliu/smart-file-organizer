@@ -9,6 +9,12 @@ def _make_files(tmp_path, names):
         (tmp_path / name).write_text(name)
 
 
+def _write_config(tmp_path, content, name="rules.toml"):
+    path = tmp_path / name
+    path.write_text(content)
+    return path
+
+
 def test_help_usage_shows_installed_command_name(capsys):
     with pytest.raises(SystemExit) as exc_info:
         main(["--help"])
@@ -226,4 +232,117 @@ def test_execute_moves_not_called_when_declined(tmp_path, monkeypatch):
     exit_code = main([str(tmp_path), "--apply"])
 
     assert exit_code == 0
+
+
+def test_config_dry_run_uses_custom_rules(tmp_path, capsys):
+    _make_files(tmp_path, ["march_paystub.pdf"])
+    config = _write_config(
+        tmp_path,
+        """
+[[filename_rules]]
+pattern = "*paystub*"
+category = "Payroll"
+""",
+    )
+
+    exit_code = main([str(tmp_path), "--config", str(config)])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "-> Payroll\\march_paystub.pdf" in out or "-> Payroll/march_paystub.pdf" in out
+    assert not (tmp_path / "Payroll").exists()
+
+
+def test_config_apply_uses_custom_rules_only_after_confirmation(tmp_path, monkeypatch):
+    _make_files(tmp_path, ["march_paystub.pdf"])
+    config = _write_config(
+        tmp_path,
+        """
+[[filename_rules]]
+pattern = "*paystub*"
+category = "Payroll"
+""",
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    exit_code = main([str(tmp_path), "--config", str(config), "--apply"])
+
+    assert exit_code == 0
+    assert (tmp_path / "Payroll" / "march_paystub.pdf").exists()
+
+
+def test_config_apply_without_confirmation_does_not_move_files(tmp_path, monkeypatch):
+    _make_files(tmp_path, ["march_paystub.pdf"])
+    config = _write_config(
+        tmp_path,
+        """
+[[filename_rules]]
+pattern = "*paystub*"
+category = "Payroll"
+""",
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+
+    exit_code = main([str(tmp_path), "--config", str(config), "--apply"])
+
+    assert exit_code == 0
+    assert not (tmp_path / "Payroll").exists()
+    assert (tmp_path / "march_paystub.pdf").exists()
+
+
+def test_missing_config_file_returns_nonzero_and_touches_nothing(tmp_path, capsys):
+    _make_files(tmp_path, ["report.pdf"])
+    missing_config = tmp_path / "does_not_exist.toml"
+
+    exit_code = main([str(tmp_path), "--config", str(missing_config), "--apply"])
+
+    out = capsys.readouterr().out
+    assert exit_code != 0
+    assert "Traceback" not in out
+    assert (tmp_path / "report.pdf").exists()
+    assert not (tmp_path / "Documents").exists()
+
+
+def test_invalid_config_cannot_modify_filesystem(tmp_path, monkeypatch):
+    _make_files(tmp_path, ["report.pdf"])
+    config = _write_config(
+        tmp_path,
+        """
+[extensions]
+".pdf" = ".."
+""",
+    )
+    # Even if the user would have confirmed, invalid config must be
+    # rejected before the confirmation prompt is ever reached.
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    exit_code = main([str(tmp_path), "--config", str(config), "--apply"])
+
+    assert exit_code != 0
+    assert (tmp_path / "report.pdf").exists()
+    assert not (tmp_path / "Documents").exists()
+
+
+def test_invalid_config_never_calls_execute_moves(tmp_path, monkeypatch):
+    config = _write_config(tmp_path, "this is not [ valid toml")
+
+    def fail_if_called(plan):
+        raise AssertionError("execute_moves should not be called for invalid config")
+
+    monkeypatch.setattr("organizer.cli.execute_moves", fail_if_called)
+
+    exit_code = main([str(tmp_path), "--config", str(config), "--apply"])
+
+    assert exit_code != 0
+
+
+def test_no_config_flag_behaves_exactly_as_before(tmp_path, capsys):
+    _make_files(tmp_path, ["bank_statement.pdf", "photo.jpg"])
+
+    exit_code = main([str(tmp_path)])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "-> Finance\\bank_statement.pdf" in out or "-> Finance/bank_statement.pdf" in out
+    assert "-> Images\\photo.jpg" in out or "-> Images/photo.jpg" in out
 

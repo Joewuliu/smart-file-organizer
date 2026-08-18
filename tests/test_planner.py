@@ -1,5 +1,6 @@
 import pytest
 
+from organizer.classifier import ClassificationRules
 from organizer.planner import PlannedMove, plan_moves
 
 
@@ -25,6 +26,20 @@ def test_filename_rule_flows_through_to_planner(tmp_path):
 
     assert move.category == "Finance"
     assert move.destination == tmp_path / "Finance" / "bank_statement.pdf"
+
+
+def test_custom_rules_flow_through_planner(tmp_path):
+    file = tmp_path / "march_paystub.pdf"
+    file.write_text("data")
+    custom_rules = ClassificationRules(
+        filename_rules=(("*paystub*", "Payroll"),),
+        extensions={},
+    )
+
+    [move] = plan_moves([file], tmp_path, custom_rules)
+
+    assert move.category == "Payroll"
+    assert move.destination == tmp_path / "Payroll" / "march_paystub.pdf"
 
 
 def test_jpg_plans_to_images(tmp_path):

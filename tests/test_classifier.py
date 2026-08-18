@@ -1,6 +1,12 @@
 from pathlib import Path
+from types import MappingProxyType
 
-from organizer.classifier import classify_extension, classify_file, classify_filename
+from organizer.classifier import (
+    ClassificationRules,
+    classify_extension,
+    classify_file,
+    classify_filename,
+)
 
 
 def test_documents_category():
@@ -151,3 +157,22 @@ def test_filename_rules_match_filename_only_not_parent_directory():
 
 def test_classify_filename_returns_none_when_no_rule_matches():
     assert classify_filename("photo.jpg") is None
+
+
+def test_classify_file_uses_default_rules_when_none_supplied():
+    # No config file means no `rules` argument is passed by callers
+    # such as plan_moves(); classify_file()'s default parameter value
+    # must reproduce the exact built-in behavior.
+    assert classify_file(Path("bank_statement.pdf")) == "Finance"
+    assert classify_file(Path("photo.jpg")) == "Images"
+
+
+def test_classify_file_accepts_custom_rules_object():
+    custom_rules = ClassificationRules(
+        filename_rules=(("*paystub*", "Payroll"),),
+        extensions=MappingProxyType({".pdf": "Legal"}),
+    )
+
+    assert classify_file(Path("march_paystub.pdf"), custom_rules) == "Payroll"
+    assert classify_file(Path("contract.pdf"), custom_rules) == "Legal"
+    assert classify_file(Path("contract.pdf")) == "Documents"
