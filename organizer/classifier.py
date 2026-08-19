@@ -108,6 +108,21 @@ def classify_filename(filename: str, rules: ClassificationRules = DEFAULT_RULES)
     return None
 
 
+def category_names(rules: ClassificationRules = DEFAULT_RULES) -> set[str]:
+    """Return every category name `rules` could ever produce for a file,
+    including the "Other" fallback.
+
+    Used to recognize (and exclude from recursive re-scanning) the
+    top-level destination folders the organizer itself may have
+    created for this ruleset — e.g. so a second, recursive run does
+    not try to reclassify files already sitting in `Documents/`.
+    """
+    names = {OTHER_CATEGORY}
+    names.update(rules.extensions.values())
+    names.update(category for _, category in rules.filename_rules)
+    return names
+
+
 def classify_file(path: Path, rules: ClassificationRules = DEFAULT_RULES) -> str:
     """Return the category for a file.
 

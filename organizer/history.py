@@ -26,6 +26,7 @@ class HistoryMove:
 @dataclass
 class HistoryOperation:
     timestamp: str
+    root: Path
     moves: list[HistoryMove]
 
 
@@ -37,6 +38,7 @@ def _write(operation: HistoryOperation, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {
         "timestamp": operation.timestamp,
+        "root": str(operation.root),
         "moves": [
             {"source": str(move.source), "destination": str(move.destination)}
             for move in operation.moves
@@ -45,22 +47,27 @@ def _write(operation: HistoryOperation, path: Path) -> None:
     path.write_text(json.dumps(data, indent=2))
 
 
-def record_operation(results: list[MoveResult], path: Path | None = None) -> None:
+def record_operation(results: list[MoveResult], root: Path, path: Path | None = None) -> None:
     """Record the successful moves from an apply as the operation
     `--undo` will reverse next.
 
-    Only moves with `success is True` are recorded; failed moves are
-    never included. If nothing succeeded, any previously recorded
-    operation is left untouched (this apply produced nothing new to
-    undo). Overwrites any existing history, since V1 tracks only the
-    single most recent operation.
+    `root` is the directory the apply operation scanned, stored so
+    undo can display exact relative paths later regardless of how
+    deeply nested (recursive mode) the original sources were. Only
+    moves with `success is True` are recorded; failed moves are never
+    included. If nothing succeeded, any previously recorded operation
+    is left untouched (this apply produced nothing new to undo).
+    Overwrites any existing history, since V1 tracks only the single
+    most recent operation.
     """
     successful = [result.move for result in results if result.success]
     if not successful:
         return
 
     moves = [HistoryMove(source=move.source, destination=move.destination) for move in successful]
-    operation = HistoryOperation(timestamp=datetime.now(timezone.utc).isoformat(), moves=moves)
+    operation = HistoryOperation(
+        timestamp=datetime.now(timezone.utc).isoformat(), root=root, moves=moves
+    )
     _write(operation, _resolve(path))
 
 
@@ -76,7 +83,7 @@ def load_last_operation(path: Path | None = None) -> HistoryOperation | None:
         HistoryMove(source=Path(entry["source"]), destination=Path(entry["destination"]))
         for entry in data["moves"]
     ]
-    return HistoryOperation(timestamp=data["timestamp"], moves=moves)
+    return HistoryOperation(timestamp=data["timestamp"], root=Path(data["root"]), moves=moves)
 
 
 def build_undo_plan(operation: HistoryOperation) -> list[PlannedMove]:
@@ -92,10 +99,14 @@ def build_undo_plan(operation: HistoryOperation) -> list[PlannedMove]:
     ]
 
 
-def save_remaining_operation(moves: list[HistoryMove], path: Path | None = None) -> None:
+def save_remaining_operation(
+    moves: list[HistoryMove], root: Path, path: Path | None = None
+) -> None:
     """Overwrite history with only the moves that still need
     restoring, after a partially-successful undo."""
-    operation = HistoryOperation(timestamp=datetime.now(timezone.utc).isoformat(), moves=moves)
+    operation = HistoryOperation(
+        timestamp=datetime.now(timezone.utc).isoformat(), root=root, moves=moves
+    )
     _write(operation, _resolve(path))
 
 

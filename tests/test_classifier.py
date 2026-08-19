@@ -2,7 +2,9 @@ from pathlib import Path
 from types import MappingProxyType
 
 from organizer.classifier import (
+    DEFAULT_RULES,
     ClassificationRules,
+    category_names,
     classify_extension,
     classify_file,
     classify_filename,
@@ -176,3 +178,36 @@ def test_classify_file_accepts_custom_rules_object():
     assert classify_file(Path("march_paystub.pdf"), custom_rules) == "Payroll"
     assert classify_file(Path("contract.pdf"), custom_rules) == "Legal"
     assert classify_file(Path("contract.pdf")) == "Documents"
+
+
+def test_category_names_includes_all_default_categories_and_other():
+    names = category_names(DEFAULT_RULES)
+
+    assert names == {
+        "Documents",
+        "Images",
+        "Spreadsheets",
+        "Videos",
+        "Audio",
+        "Archives",
+        "Code",
+        "Finance",
+        "School",
+        "Resumes",
+        "Other",
+    }
+
+
+def test_category_names_reflects_custom_rules_only():
+    custom_rules = ClassificationRules(
+        filename_rules=(("*paystub*", "Payroll"),),
+        extensions=MappingProxyType({".pdf": "Taxes", ".csv": "Receipts"}),
+    )
+
+    names = category_names(custom_rules)
+
+    assert names == {"Payroll", "Taxes", "Receipts", "Other"}
+
+
+def test_category_names_defaults_to_default_rules_when_none_supplied():
+    assert category_names() == category_names(DEFAULT_RULES)

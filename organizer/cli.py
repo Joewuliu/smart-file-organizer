@@ -4,8 +4,9 @@ import argparse
 from pathlib import Path
 
 from organizer import history
-from organizer.classifier import DEFAULT_RULES
+from organizer.classifier import DEFAULT_RULES, category_names
 from organizer.config import ConfigError, load_rules
+from organizer.date_organizer import is_date_destination_dir
 from organizer.mover import execute_moves
 from organizer.planner import PlannedMove, plan_moves, plan_moves_by_date
 from organizer.scanner import scan_directory
@@ -40,14 +41,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Undo the most recent successful apply operation",
     )
+    parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Also scan nested subdirectories (default: top level only)",
+    )
     return parser.parse_args(argv)
 
 
 def _print_preview(root: Path, plan: list[PlannedMove]) -> None:
     print("Proposed moves:\n")
     for move in plan:
+        relative_source = move.source.relative_to(root)
         relative_destination = move.destination.relative_to(root)
-        print(move.source.name)
+        print(str(relative_source))
         print(f"  -> {relative_destination}\n")
     print(f"{len(plan)} files would be moved.")
     print("No files have been modified.")
@@ -74,8 +81,9 @@ def _print_results(root: Path, results) -> int:
     if failed:
         print()
         for result in failed:
+            relative_source = result.move.source.relative_to(root)
             relative_destination = result.move.destination.relative_to(root)
-            print(f"  {result.move.source.name} -> {relative_destination}: {result.error}")
+            print(f"  {relative_source} -> {relative_destination}: {result.error}")
         return 1
 
     return 0
@@ -88,7 +96,7 @@ def _run_undo() -> int:
         return 0
 
     undo_plan = history.build_undo_plan(operation)
-    root = undo_plan[0].destination.parent
+    root = operation.root
 
     print("Smart File Organizer\n")
     _print_undo_preview(root, undo_plan)
@@ -106,7 +114,7 @@ def _run_undo() -> int:
         if not result.success
     ]
     if remaining:
-        history.save_remaining_operation(remaining)
+        history.save_remaining_operation(remaining, root)
     else:
         history.clear_history()
 
@@ -133,6 +141,12 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 "Error: --undo cannot be combined with --config "
                 "(undo does not use classification rules)."
+            )
+            return 1
+        if args.recursive:
+            print(
+                "Error: --undo cannot be combined with --recursive "
+                "(undo does not rescan any directory)."
             )
             return 1
         return _run_undo()
@@ -162,8 +176,19 @@ def main(argv: list[str] | None = None) -> int:
     print("Scanning:")
     print(f"{root}\n")
 
+    exclude_dir = None
+    if args.recursive:
+        if args.by == "date":
+            exclude_dir = is_date_destination_dir
+        else:
+            excluded_categories = category_names(rules)
+
+            def exclude_dir(relative_path: Path) -> bool:
+                parts = relative_path.parts
+                return len(parts) == 1 and parts[0] in excluded_categories
+
     try:
-        files = scan_directory(root)
+        files = scan_directory(root, recursive=args.recursive, exclude_dir=exclude_dir)
     except (FileNotFoundError, NotADirectoryError) as exc:
         print(f"Error: {exc}")
         return 1
@@ -194,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     results = execute_moves(plan)
-    history.record_operation(results)
+    history.record_operation(results, root)
     return _print_results(root, results)
 
 
