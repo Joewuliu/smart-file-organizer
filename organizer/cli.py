@@ -8,7 +8,12 @@ from organizer.classifier import DEFAULT_RULES, category_names
 from organizer.config import ConfigError, load_rules
 from organizer.date_organizer import is_date_destination_dir
 from organizer.mover import execute_moves
-from organizer.planner import PlannedMove, plan_moves, plan_moves_by_date
+from organizer.planner import (
+    PlannedMove,
+    plan_moves,
+    plan_moves_by_category_and_date,
+    plan_moves_by_date,
+)
 from organizer.scanner import scan_directory
 
 
@@ -32,9 +37,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--by",
-        choices=["category", "date"],
+        choices=["category", "date", "category-date"],
         default="category",
-        help="Organize by rule-based category (default) or by modification date",
+        help="Organize by rule-based category (default), by modification date, "
+        "or by category then date",
     )
     parser.add_argument(
         "--undo",
@@ -134,7 +140,7 @@ def main(argv: list[str] | None = None) -> int:
                 "(undo always previews and confirms on its own)."
             )
             return 1
-        if args.by == "date":
+        if args.by != "category":
             print("Error: --undo cannot be combined with --by (undo does not reclassify files).")
             return 1
         if args.config:
@@ -180,6 +186,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.recursive:
         if args.by == "date":
             exclude_dir = is_date_destination_dir
+        elif args.by == "category-date":
+            excluded_categories = category_names(rules)
+
+            def exclude_dir(relative_path: Path) -> bool:
+                parts = relative_path.parts
+                if len(parts) != 3:
+                    return False
+                category, *date_parts = parts
+                return category in excluded_categories and is_date_destination_dir(
+                    Path(*date_parts)
+                )
         else:
             excluded_categories = category_names(rules)
 
@@ -200,6 +217,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.by == "date":
             plan = plan_moves_by_date(files, root)
+        elif args.by == "category-date":
+            plan = plan_moves_by_category_and_date(files, root, rules)
         else:
             plan = plan_moves(files, root, rules)
     except NotADirectoryError as exc:

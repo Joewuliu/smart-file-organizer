@@ -1015,3 +1015,247 @@ def test_undo_with_recursive_flag_is_rejected(capsys):
     out = capsys.readouterr().out
     assert exit_code != 0
     assert "Traceback" not in out
+
+
+# --- Milestone 12: combined category + date organization ---
+
+
+def test_default_mode_remains_category_after_category_date_addition(tmp_path, capsys):
+    _make_files(tmp_path, ["bank_statement.pdf"])
+
+    exit_code = main([str(tmp_path)])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "-> Finance\\bank_statement.pdf" in out or "-> Finance/bank_statement.pdf" in out
+
+
+def test_by_date_mode_remains_unchanged(tmp_path, capsys):
+    file = tmp_path / "report.pdf"
+    file.write_text("data")
+    _set_mtime(file, 2026, 8, 18)
+
+    exit_code = main([str(tmp_path), "--by", "date"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    joined_dest = os.path.join("2026", "08-August", "report.pdf")
+    assert f"-> {joined_dest}" in out
+
+
+def test_by_category_mode_remains_unchanged(tmp_path, capsys):
+    _make_files(tmp_path, ["photo.jpg"])
+
+    exit_code = main([str(tmp_path), "--by", "category"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "-> Images\\photo.jpg" in out or "-> Images/photo.jpg" in out
+
+
+def test_category_date_preview_is_correct(tmp_path, capsys):
+    file = tmp_path / "bank_statement.pdf"
+    file.write_text("data")
+    _set_mtime(file, 2026, 8, 18)
+
+    exit_code = main([str(tmp_path), "--by", "category-date"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    joined_dest = os.path.join("Finance", "2026", "08-August", "bank_statement.pdf")
+    assert f"-> {joined_dest}" in out
+    assert "1 files would be moved." in out
+
+
+def test_category_date_dry_run_moves_nothing(tmp_path):
+    file = tmp_path / "bank_statement.pdf"
+    file.write_text("data")
+    _set_mtime(file, 2026, 8, 18)
+
+    exit_code = main([str(tmp_path), "--by", "category-date"])
+
+    assert exit_code == 0
+    assert file.exists()
+    assert not (tmp_path / "Finance").exists()
+
+
+def test_category_date_apply_with_y_moves_correctly(tmp_path, monkeypatch):
+    file = tmp_path / "bank_statement.pdf"
+    file.write_text("data")
+    _set_mtime(file, 2026, 8, 18)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    exit_code = main([str(tmp_path), "--by", "category-date", "--apply"])
+
+    assert exit_code == 0
+    assert (tmp_path / "Finance" / "2026" / "08-August" / "bank_statement.pdf").exists()
+    assert not file.exists()
+
+
+def test_category_date_apply_declined_moves_nothing(tmp_path, monkeypatch):
+    file = tmp_path / "bank_statement.pdf"
+    file.write_text("data")
+    _set_mtime(file, 2026, 8, 18)
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+
+    exit_code = main([str(tmp_path), "--by", "category-date", "--apply"])
+
+    assert exit_code == 0
+    assert file.exists()
+    assert not (tmp_path / "Finance").exists()
+
+
+def test_category_date_works_with_config(tmp_path, monkeypatch):
+    file = tmp_path / "march_paystub.pdf"
+    file.write_text("data")
+    _set_mtime(file, 2026, 8, 18)
+    config = _write_config(
+        tmp_path,
+        """
+[[filename_rules]]
+pattern = "*paystub*"
+category = "Payroll"
+""",
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    exit_code = main([str(tmp_path), "--by", "category-date", "--config", str(config), "--apply"])
+
+    assert exit_code == 0
+    assert (tmp_path / "Payroll" / "2026" / "08-August" / "march_paystub.pdf").exists()
+
+
+def test_category_date_works_with_recursive(tmp_path, monkeypatch):
+    personal = tmp_path / "Personal"
+    personal.mkdir()
+    file = personal / "bank_statement.pdf"
+    file.write_text("data")
+    _set_mtime(file, 2026, 8, 18)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    exit_code = main([str(tmp_path), "--by", "category-date", "--recursive", "--apply"])
+
+    assert exit_code == 0
+    assert (tmp_path / "Finance" / "2026" / "08-August" / "bank_statement.pdf").exists()
+    assert not file.exists()
+
+
+def test_recursive_category_date_excludes_already_organized_trees(tmp_path, monkeypatch):
+    old_dest = tmp_path / "Finance" / "2026" / "08-August"
+    old_dest.mkdir(parents=True)
+    (old_dest / "old_statement.pdf").write_text("already organized")
+    personal = tmp_path / "Personal"
+    personal.mkdir()
+    new_file = personal / "new_statement.pdf"
+    new_file.write_text("data")
+    _set_mtime(new_file, 2026, 8, 18)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    exit_code = main([str(tmp_path), "--by", "category-date", "--recursive", "--apply"])
+
+    assert exit_code == 0
+    assert (old_dest / "old_statement.pdf").read_text() == "already organized"
+    assert (old_dest / "new_statement.pdf").exists()
+
+
+def test_recursive_category_date_excludes_custom_config_destination_trees(tmp_path, monkeypatch):
+    old_dest = tmp_path / "Payroll" / "2026" / "08-August"
+    old_dest.mkdir(parents=True)
+    (old_dest / "old_payroll.pdf").write_text("already organized")
+    personal = tmp_path / "Personal"
+    personal.mkdir()
+    new_file = personal / "march_paystub.pdf"
+    new_file.write_text("data")
+    _set_mtime(new_file, 2026, 8, 18)
+    config = _write_config(
+        tmp_path,
+        """
+[[filename_rules]]
+pattern = "*paystub*"
+category = "Payroll"
+""",
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    exit_code = main(
+        [
+            str(tmp_path),
+            "--by",
+            "category-date",
+            "--recursive",
+            "--config",
+            str(config),
+            "--apply",
+        ]
+    )
+
+    assert exit_code == 0
+    assert (old_dest / "old_payroll.pdf").read_text() == "already organized"
+    assert (old_dest / "march_paystub.pdf").exists()
+
+
+def test_recursive_category_date_does_not_exclude_bare_category_folder(tmp_path, monkeypatch):
+    # A "Finance" folder that is not organizer-shaped (no YYYY/MM-Month
+    # subtree beneath it) is still scanned in category-date mode,
+    # unlike plain category mode where any top-level "Finance" folder
+    # is excluded outright.
+    finance = tmp_path / "Finance"
+    finance.mkdir()
+    file = finance / "old_notes.txt"
+    file.write_text("data")
+    _set_mtime(file, 2026, 8, 18)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    exit_code = main([str(tmp_path), "--by", "category-date", "--recursive", "--apply"])
+
+    assert exit_code == 0
+    assert (tmp_path / "Documents" / "2026" / "08-August" / "old_notes.txt").exists()
+
+
+def test_category_date_undo_restores_exact_original_path(tmp_path, monkeypatch):
+    family = tmp_path / "Family"
+    family.mkdir()
+    file = family / "statement.pdf"
+    file.write_text("data")
+    _set_mtime(file, 2026, 8, 18)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    main([str(tmp_path), "--by", "category-date", "--recursive", "--apply"])
+    assert (tmp_path / "Finance" / "2026" / "08-August" / "statement.pdf").exists()
+    assert not file.exists()
+
+    exit_code = main(["--undo"])
+
+    assert exit_code == 0
+    assert file.exists()
+    assert file.read_text() == "data"
+    assert not (tmp_path / "Finance" / "2026" / "08-August" / "statement.pdf").exists()
+
+
+def test_category_date_undo_collision_protection(tmp_path, monkeypatch):
+    family = tmp_path / "Family"
+    family.mkdir()
+    file = family / "statement.pdf"
+    file.write_text("original")
+    _set_mtime(file, 2026, 8, 18)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    main([str(tmp_path), "--by", "category-date", "--recursive", "--apply"])
+    organized = tmp_path / "Finance" / "2026" / "08-August" / "statement.pdf"
+    assert organized.exists()
+
+    (family / "statement.pdf").write_text("new unrelated file")
+
+    exit_code = main(["--undo"])
+
+    assert exit_code == 1
+    assert (family / "statement.pdf").read_text() == "new unrelated file"
+    assert organized.read_text() == "original"
+
+
+def test_undo_with_by_category_date_is_rejected(capsys):
+    exit_code = main(["--undo", "--by", "category-date"])
+
+    out = capsys.readouterr().out
+    assert exit_code != 0
+    assert "Traceback" not in out

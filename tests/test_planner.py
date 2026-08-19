@@ -4,7 +4,12 @@ from datetime import datetime
 import pytest
 
 from organizer.classifier import ClassificationRules
-from organizer.planner import PlannedMove, plan_moves, plan_moves_by_date
+from organizer.planner import (
+    PlannedMove,
+    plan_moves,
+    plan_moves_by_category_and_date,
+    plan_moves_by_date,
+)
 
 
 def _set_mtime(path, year, month, day, hour=12):
@@ -287,5 +292,172 @@ def test_plan_moves_by_date_does_not_modify_filesystem(tmp_path):
     plan_moves_by_date([source], tmp_path)
 
     assert not (tmp_path / "2026").exists()
+    assert source.exists()
+    assert source.read_text() == "data"
+
+
+# --- Milestone 12: combined category + date organization ---
+
+
+def test_category_date_pdf_with_no_filename_rule(tmp_path):
+    source = tmp_path / "file.pdf"
+    source.write_text("data")
+    _set_mtime(source, 2026, 8, 18)
+
+    [move] = plan_moves_by_category_and_date([source], tmp_path)
+
+    assert move.category == "Documents/2026/08-August"
+    assert move.destination == tmp_path / "Documents" / "2026" / "08-August" / "file.pdf"
+
+
+def test_category_date_jpg(tmp_path):
+    source = tmp_path / "photo.jpg"
+    source.write_text("data")
+    _set_mtime(source, 2026, 8, 18)
+
+    [move] = plan_moves_by_category_and_date([source], tmp_path)
+
+    assert move.destination == tmp_path / "Images" / "2026" / "08-August" / "photo.jpg"
+
+
+def test_category_date_finance_filename_rule(tmp_path):
+    source = tmp_path / "bank_statement.pdf"
+    source.write_text("data")
+    _set_mtime(source, 2026, 8, 18)
+
+    [move] = plan_moves_by_category_and_date([source], tmp_path)
+
+    assert move.destination == tmp_path / "Finance" / "2026" / "08-August" / "bank_statement.pdf"
+
+
+def test_category_date_resumes_filename_rule(tmp_path):
+    source = tmp_path / "resume_joseph.pdf"
+    source.write_text("data")
+    _set_mtime(source, 2026, 8, 18)
+
+    [move] = plan_moves_by_category_and_date([source], tmp_path)
+
+    assert move.destination == tmp_path / "Resumes" / "2026" / "08-August" / "resume_joseph.pdf"
+
+
+def test_category_date_other_fallback(tmp_path):
+    source = tmp_path / "mystery.xyz"
+    source.write_text("data")
+    _set_mtime(source, 2026, 8, 18)
+
+    [move] = plan_moves_by_category_and_date([source], tmp_path)
+
+    assert move.destination == tmp_path / "Other" / "2026" / "08-August" / "mystery.xyz"
+
+
+def test_category_date_custom_config_category(tmp_path):
+    source = tmp_path / "march_paystub.pdf"
+    source.write_text("data")
+    _set_mtime(source, 2026, 8, 18)
+    custom_rules = ClassificationRules(
+        filename_rules=(("*paystub*", "Payroll"),),
+        extensions={},
+    )
+
+    [move] = plan_moves_by_category_and_date([source], tmp_path, custom_rules)
+
+    assert move.destination == tmp_path / "Payroll" / "2026" / "08-August" / "march_paystub.pdf"
+
+
+def test_category_date_filename_rule_overrides_extension(tmp_path):
+    # vacation_invoice_photo.jpg would classify as Images by extension,
+    # but the "*invoice*" filename rule takes precedence, same as
+    # plain category mode.
+    source = tmp_path / "vacation_invoice_photo.jpg"
+    source.write_text("data")
+    _set_mtime(source, 2026, 8, 18)
+
+    [move] = plan_moves_by_category_and_date([source], tmp_path)
+
+    expected = tmp_path / "Finance" / "2026" / "08-August" / "vacation_invoice_photo.jpg"
+    assert move.destination == expected
+
+
+def test_category_date_january_formatting(tmp_path):
+    source = tmp_path / "report.pdf"
+    source.write_text("data")
+    _set_mtime(source, 2026, 1, 15)
+
+    [move] = plan_moves_by_category_and_date([source], tmp_path)
+
+    assert move.destination == tmp_path / "Documents" / "2026" / "01-January" / "report.pdf"
+
+
+def test_category_date_august_formatting(tmp_path):
+    source = tmp_path / "report.pdf"
+    source.write_text("data")
+    _set_mtime(source, 2026, 8, 18)
+
+    [move] = plan_moves_by_category_and_date([source], tmp_path)
+
+    assert move.destination == tmp_path / "Documents" / "2026" / "08-August" / "report.pdf"
+
+
+def test_category_date_december_formatting(tmp_path):
+    source = tmp_path / "report.pdf"
+    source.write_text("data")
+    _set_mtime(source, 2025, 12, 1)
+
+    [move] = plan_moves_by_category_and_date([source], tmp_path)
+
+    assert move.destination == tmp_path / "Documents" / "2025" / "12-December" / "report.pdf"
+
+
+def test_category_date_different_years(tmp_path):
+    old_file = tmp_path / "old.pdf"
+    new_file = tmp_path / "new.pdf"
+    old_file.write_text("data")
+    new_file.write_text("data")
+    _set_mtime(old_file, 2025, 12, 1)
+    _set_mtime(new_file, 2026, 1, 1)
+
+    plan = plan_moves_by_category_and_date([old_file, new_file], tmp_path)
+
+    assert plan[0].destination == tmp_path / "Documents" / "2025" / "12-December" / "old.pdf"
+    assert plan[1].destination == tmp_path / "Documents" / "2026" / "01-January" / "new.pdf"
+
+
+def test_category_date_collision_gets_numbered_suffix(tmp_path):
+    dest_dir = tmp_path / "Documents" / "2026" / "08-August"
+    dest_dir.mkdir(parents=True)
+    (dest_dir / "report.pdf").write_text("existing")
+
+    source = tmp_path / "report.pdf"
+    source.write_text("new")
+    _set_mtime(source, 2026, 8, 18)
+
+    [move] = plan_moves_by_category_and_date([source], tmp_path)
+
+    assert move.destination == dest_dir / "report (1).pdf"
+
+
+def test_category_date_multiple_collisions_increment(tmp_path):
+    dest_dir = tmp_path / "Documents" / "2026" / "08-August"
+    dest_dir.mkdir(parents=True)
+    (dest_dir / "report.pdf").write_text("existing")
+    (dest_dir / "report (1).pdf").write_text("existing")
+
+    source = tmp_path / "report.pdf"
+    source.write_text("new")
+    _set_mtime(source, 2026, 8, 18)
+
+    [move] = plan_moves_by_category_and_date([source], tmp_path)
+
+    assert move.destination == dest_dir / "report (2).pdf"
+
+
+def test_category_date_planning_does_not_modify_filesystem(tmp_path):
+    source = tmp_path / "report.pdf"
+    source.write_text("data")
+    _set_mtime(source, 2026, 8, 18)
+
+    plan_moves_by_category_and_date([source], tmp_path)
+
+    assert not (tmp_path / "Documents").exists()
     assert source.exists()
     assert source.read_text() == "data"
