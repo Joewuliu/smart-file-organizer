@@ -30,6 +30,12 @@ def _history_path(tmp_path):
     return tmp_path / "_test_history" / "history.json"
 
 
+def _state_path(tmp_path):
+    # Matches the location the autouse `_isolated_state` fixture in
+    # conftest.py redirects organizer.state.DEFAULT_STATE_PATH to.
+    return tmp_path / "_test_state" / "state.json"
+
+
 def test_help_usage_shows_installed_command_name(capsys):
     with pytest.raises(SystemExit) as exc_info:
         main(["--help"])
@@ -866,43 +872,55 @@ def test_recursive_apply_with_n_cancels(tmp_path, monkeypatch):
 
 
 def test_recursive_excludes_builtin_destination_folders(tmp_path, monkeypatch):
-    dest = tmp_path / "Documents"
-    dest.mkdir()
-    (dest / "report.pdf").write_text("already organized")
+    # Milestone 13: exclusion is now state-based, not name-based. A
+    # "Documents" folder is only excluded once the organizer has
+    # actually used it as a destination in a real run (which records
+    # it in state) — not merely because it exists on disk and shares
+    # a category name. So this test primes state with a real first
+    # apply before checking the second run excludes it.
+    (tmp_path / "old_report.pdf").write_text("first run")
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    main([str(tmp_path), "--recursive", "--apply"])
+    assert (tmp_path / "Documents" / "old_report.pdf").exists()
+
     personal = tmp_path / "Personal"
     personal.mkdir()
     (personal / "notes.txt").write_text("data")
-    monkeypatch.setattr("builtins.input", lambda prompt: "y")
 
     exit_code = main([str(tmp_path), "--recursive", "--apply"])
 
     assert exit_code == 0
-    # pre-existing organized file was never rediscovered or re-planned
-    assert (dest / "report.pdf").read_text() == "already organized"
+    # the already-organized file was never rediscovered or re-planned
+    assert (tmp_path / "Documents" / "old_report.pdf").exists()
     # the genuinely new nested file was still organized correctly
-    assert (dest / "notes.txt").exists()
+    assert (tmp_path / "Documents" / "notes.txt").exists()
 
 
 def test_recursive_excludes_custom_config_destination_folders(tmp_path, monkeypatch):
-    payroll = tmp_path / "Payroll"
-    payroll.mkdir()
-    (payroll / "old_payroll.pdf").write_text("already organized")
-    (tmp_path / "march_paystub.pdf").write_text("data")
-    config = _write_config(
-        tmp_path,
-        """
+    config_content = """
 [[filename_rules]]
 pattern = "*paystub*"
 category = "Payroll"
-""",
-    )
+"""
+    config = _write_config(tmp_path, config_content)
+    (tmp_path / "old_paystub.pdf").write_text("first run")
     monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    main([str(tmp_path), "--recursive", "--config", str(config), "--apply"])
+    assert (tmp_path / "Payroll" / "old_paystub.pdf").exists()
+
+    # The apply above also swept the config file itself into Other/
+    # (it doesn't match "*paystub*"), so it must be rewritten at its
+    # original path before the second run can load it again.
+    config = _write_config(tmp_path, config_content)
+    personal = tmp_path / "Personal"
+    personal.mkdir()
+    (personal / "march_paystub.pdf").write_text("data")
 
     exit_code = main([str(tmp_path), "--recursive", "--config", str(config), "--apply"])
 
     assert exit_code == 0
-    assert (payroll / "old_payroll.pdf").read_text() == "already organized"
-    assert (payroll / "march_paystub.pdf").exists()
+    assert (tmp_path / "Payroll" / "old_paystub.pdf").exists()
+    assert (tmp_path / "Payroll" / "march_paystub.pdf").exists()
 
 
 def test_recursive_by_date_dry_run_plans_nested_files_correctly(tmp_path, capsys):
@@ -922,21 +940,25 @@ def test_recursive_by_date_dry_run_plans_nested_files_correctly(tmp_path, capsys
 
 
 def test_recursive_excludes_date_destination_trees(tmp_path, monkeypatch):
+    old_file = tmp_path / "already_organized.pdf"
+    old_file.write_text("first run")
+    _set_mtime(old_file, 2026, 8, 18)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    main([str(tmp_path), "--recursive", "--by", "date", "--apply"])
     old_dest = tmp_path / "2026" / "08-August"
-    old_dest.mkdir(parents=True)
-    (old_dest / "already_organized.pdf").write_text("keep me")
+    assert (old_dest / "already_organized.pdf").exists()
+
     personal = tmp_path / "Personal"
     personal.mkdir()
     new_file = personal / "new_report.pdf"
     new_file.write_text("data")
     _set_mtime(new_file, 2026, 8, 18)
-    monkeypatch.setattr("builtins.input", lambda prompt: "y")
 
     exit_code = main([str(tmp_path), "--recursive", "--by", "date", "--apply"])
 
     assert exit_code == 0
-    assert (old_dest / "already_organized.pdf").read_text() == "keep me"
-    assert (tmp_path / "2026" / "08-August" / "new_report.pdf").exists()
+    assert (old_dest / "already_organized.pdf").read_text() == "first run"
+    assert (old_dest / "new_report.pdf").exists()
 
 
 def test_recursive_apply_moves_nested_files_to_correct_dates(tmp_path, monkeypatch):
@@ -955,10 +977,6 @@ def test_recursive_apply_moves_nested_files_to_correct_dates(tmp_path, monkeypat
 
 
 def test_recursive_undo_restores_exact_nested_source_location(tmp_path, monkeypatch):
-    # Uses a folder name ("Family") that does not collide with any
-    # built-in category name, since a folder actually named "School"
-    # would itself be excluded as a would-be destination folder (see
-    # test_recursive_excludes_builtin_destination_folders).
     family = tmp_path / "Family" / "Records"
     family.mkdir(parents=True)
     file = family / "report.pdf"
@@ -1141,56 +1159,60 @@ def test_category_date_works_with_recursive(tmp_path, monkeypatch):
 
 
 def test_recursive_category_date_excludes_already_organized_trees(tmp_path, monkeypatch):
+    old_file = tmp_path / "old_statement.pdf"
+    old_file.write_text("first run")
+    _set_mtime(old_file, 2026, 8, 18)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    main([str(tmp_path), "--by", "category-date", "--recursive", "--apply"])
     old_dest = tmp_path / "Finance" / "2026" / "08-August"
-    old_dest.mkdir(parents=True)
-    (old_dest / "old_statement.pdf").write_text("already organized")
+    assert (old_dest / "old_statement.pdf").exists()
+
     personal = tmp_path / "Personal"
     personal.mkdir()
     new_file = personal / "new_statement.pdf"
     new_file.write_text("data")
     _set_mtime(new_file, 2026, 8, 18)
-    monkeypatch.setattr("builtins.input", lambda prompt: "y")
 
     exit_code = main([str(tmp_path), "--by", "category-date", "--recursive", "--apply"])
 
     assert exit_code == 0
-    assert (old_dest / "old_statement.pdf").read_text() == "already organized"
+    assert (old_dest / "old_statement.pdf").read_text() == "first run"
     assert (old_dest / "new_statement.pdf").exists()
 
 
 def test_recursive_category_date_excludes_custom_config_destination_trees(tmp_path, monkeypatch):
+    config_content = """
+[[filename_rules]]
+pattern = "*paystub*"
+category = "Payroll"
+"""
+    config = _write_config(tmp_path, config_content)
+    old_file = tmp_path / "old_paystub.pdf"
+    old_file.write_text("first run")
+    _set_mtime(old_file, 2026, 8, 18)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    main(
+        [str(tmp_path), "--by", "category-date", "--recursive", "--config", str(config), "--apply"]
+    )
     old_dest = tmp_path / "Payroll" / "2026" / "08-August"
-    old_dest.mkdir(parents=True)
-    (old_dest / "old_payroll.pdf").write_text("already organized")
+    assert (old_dest / "old_paystub.pdf").exists()
+
+    # The apply above also swept the config file itself into Other/,
+    # so it must be rewritten at its original path before the second
+    # run can load it again.
+    config = _write_config(tmp_path, config_content)
     personal = tmp_path / "Personal"
     personal.mkdir()
     new_file = personal / "march_paystub.pdf"
     new_file.write_text("data")
     _set_mtime(new_file, 2026, 8, 18)
-    config = _write_config(
-        tmp_path,
-        """
-[[filename_rules]]
-pattern = "*paystub*"
-category = "Payroll"
-""",
-    )
-    monkeypatch.setattr("builtins.input", lambda prompt: "y")
 
     exit_code = main(
-        [
-            str(tmp_path),
-            "--by",
-            "category-date",
-            "--recursive",
-            "--config",
-            str(config),
-            "--apply",
-        ]
+        [str(tmp_path), "--by", "category-date", "--recursive", "--config", str(config), "--apply"]
     )
 
     assert exit_code == 0
-    assert (old_dest / "old_payroll.pdf").read_text() == "already organized"
+    assert (old_dest / "old_paystub.pdf").read_text() == "first run"
     assert (old_dest / "march_paystub.pdf").exists()
 
 
@@ -1259,3 +1281,177 @@ def test_undo_with_by_category_date_is_rejected(capsys):
     out = capsys.readouterr().out
     assert exit_code != 0
     assert "Traceback" not in out
+
+
+# --- Milestone 13: managed destination tracking ---
+
+
+def test_dry_run_writes_no_state(tmp_path):
+    _make_files(tmp_path, ["report.pdf"])
+
+    main([str(tmp_path), "--recursive"])
+
+    assert not _state_path(tmp_path).exists()
+
+
+def test_cancelled_apply_writes_no_state(tmp_path, monkeypatch):
+    _make_files(tmp_path, ["report.pdf"])
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+
+    main([str(tmp_path), "--recursive", "--apply"])
+
+    assert not _state_path(tmp_path).exists()
+
+
+def test_successful_apply_records_managed_destination(tmp_path, monkeypatch):
+    _make_files(tmp_path, ["report.pdf"])
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    main([str(tmp_path), "--recursive", "--apply"])
+
+    data = json.loads(_state_path(tmp_path).read_text())
+    key = str(tmp_path.resolve())
+    assert data["roots"][key]["managed_directories"] == ["Documents"]
+
+
+def test_partial_apply_records_only_successful_destination(tmp_path, monkeypatch):
+    _make_files(tmp_path, ["report.pdf", "photo.jpg"])
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    def fake_execute_moves(plan):
+        results = []
+        for move in plan:
+            success = move.source.name == "photo.jpg"
+            results.append(MoveResult(move, success, None if success else "boom"))
+        return results
+
+    monkeypatch.setattr("organizer.cli.execute_moves", fake_execute_moves)
+
+    exit_code = main([str(tmp_path), "--recursive", "--apply"])
+
+    assert exit_code == 1
+    data = json.loads(_state_path(tmp_path).read_text())
+    key = str(tmp_path.resolve())
+    assert data["roots"][key]["managed_directories"] == ["Images"]
+
+
+def test_recursive_scans_unmanaged_folder_named_documents(tmp_path, monkeypatch):
+    # A real pre-existing "Documents" folder this tool never actually
+    # organized into must not be excluded merely because its name
+    # matches a category (the old, now-removed heuristic).
+    documents = tmp_path / "Documents"
+    documents.mkdir()
+    (documents / "photo.jpg").write_text("pre-existing user file")
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    exit_code = main([str(tmp_path), "--recursive", "--apply"])
+
+    assert exit_code == 0
+    # a .jpg classifies to Images, not Documents, so its ending up in
+    # Images/ proves Documents/ was actually scanned, not skipped
+    assert (tmp_path / "Images" / "photo.jpg").exists()
+    assert not (documents / "photo.jpg").exists()
+
+
+def test_recursive_scans_unmanaged_folder_named_school(tmp_path, monkeypatch):
+    school = tmp_path / "School"
+    school.mkdir()
+    (school / "photo.jpg").write_text("pre-existing user file")
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    exit_code = main([str(tmp_path), "--recursive", "--apply"])
+
+    assert exit_code == 0
+    assert (tmp_path / "Images" / "photo.jpg").exists()
+    assert not (school / "photo.jpg").exists()
+
+
+def test_recursive_scans_unmanaged_custom_category_folder(tmp_path, monkeypatch):
+    payroll = tmp_path / "Payroll"
+    payroll.mkdir()
+    (payroll / "photo.jpg").write_text("pre-existing user file")
+    config = _write_config(
+        tmp_path,
+        """
+[[filename_rules]]
+pattern = "*paystub*"
+category = "Payroll"
+""",
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    exit_code = main([str(tmp_path), "--recursive", "--config", str(config), "--apply"])
+
+    assert exit_code == 0
+    # this config defines no [extensions] table, so a non-matching
+    # .jpg falls back to Other, not staying in Payroll — proof the
+    # pre-existing Payroll/ folder was actually scanned
+    assert (tmp_path / "Other" / "photo.jpg").exists()
+    assert not (payroll / "photo.jpg").exists()
+
+
+def test_malformed_state_is_handled_safely(tmp_path, monkeypatch, capsys):
+    _make_files(tmp_path, ["report.pdf"])
+    state_path = _state_path(tmp_path)
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text("not valid json {{{")
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    exit_code = main([str(tmp_path), "--recursive", "--apply"])
+
+    out = capsys.readouterr().out
+    assert exit_code != 0
+    assert "Traceback" not in out
+    assert (tmp_path / "report.pdf").exists()
+    assert not (tmp_path / "Documents").exists()
+
+
+def test_state_for_one_root_does_not_affect_another(tmp_path, monkeypatch):
+    root_a = tmp_path / "root_a"
+    root_b = tmp_path / "root_b"
+    root_a.mkdir()
+    root_b.mkdir()
+    (root_a / "report.pdf").write_text("data")
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    main([str(root_a), "--recursive", "--apply"])
+    assert (root_a / "Documents" / "report.pdf").exists()
+
+    # root_b has its own genuine "Documents" folder that has never
+    # been used as a destination for root_b specifically; it must
+    # still be scanned despite root_a's state.
+    documents_b = root_b / "Documents"
+    documents_b.mkdir()
+    (documents_b / "photo.jpg").write_text("pre-existing")
+
+    exit_code = main([str(root_b), "--recursive", "--apply"])
+
+    assert exit_code == 0
+    assert (root_b / "Images" / "photo.jpg").exists()
+
+
+def test_state_remains_managed_after_undo(tmp_path, monkeypatch):
+    _make_files(tmp_path, ["report.pdf"])
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    main([str(tmp_path), "--recursive", "--apply"])
+    assert (tmp_path / "Documents" / "report.pdf").exists()
+
+    main(["--undo"])
+    assert (tmp_path / "report.pdf").exists()
+    assert not (tmp_path / "Documents" / "report.pdf").exists()
+
+    # Documents/ is now empty on disk, but per the documented policy
+    # it should still be considered managed.
+    data = json.loads(_state_path(tmp_path).read_text())
+    key = str(tmp_path.resolve())
+    assert data["roots"][key]["managed_directories"] == ["Documents"]
+
+    # Prove it: a new .jpg placed directly inside the now-empty
+    # Documents/ folder must stay put on a later recursive run
+    # (if rediscovered, it would classify to Images/ instead).
+    (tmp_path / "Documents" / "photo.jpg").write_text("data")
+
+    exit_code = main([str(tmp_path), "--recursive", "--apply"])
+
+    assert exit_code == 0
+    assert (tmp_path / "Documents" / "photo.jpg").exists()
+    assert not (tmp_path / "Images").exists()
