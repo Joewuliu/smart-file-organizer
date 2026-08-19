@@ -3,6 +3,7 @@
 import argparse
 from pathlib import Path
 
+from organizer import history
 from organizer.classifier import DEFAULT_RULES
 from organizer.config import ConfigError, load_rules
 from organizer.mover import execute_moves
@@ -15,7 +16,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         prog="smart-organizer",
         description="Organize files in a directory by file type.",
     )
-    parser.add_argument("directory", help="Directory to organize")
+    parser.add_argument(
+        "directory", nargs="?", default=None, help="Directory to organize (omit with --undo)"
+    )
     parser.add_argument(
         "--apply",
         action="store_true",
@@ -32,6 +35,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="category",
         help="Organize by rule-based category (default) or by modification date",
     )
+    parser.add_argument(
+        "--undo",
+        action="store_true",
+        help="Undo the most recent successful apply operation",
+    )
     return parser.parse_args(argv)
 
 
@@ -43,6 +51,16 @@ def _print_preview(root: Path, plan: list[PlannedMove]) -> None:
         print(f"  -> {relative_destination}\n")
     print(f"{len(plan)} files would be moved.")
     print("No files have been modified.")
+
+
+def _print_undo_preview(root: Path, plan: list[PlannedMove]) -> None:
+    print("Undo last operation:\n")
+    for move in plan:
+        relative_source = move.source.relative_to(root)
+        relative_destination = move.destination.relative_to(root)
+        print(str(relative_source))
+        print(f"  -> {relative_destination}\n")
+    print(f"{len(plan)} files would be restored.")
 
 
 def _print_results(root: Path, results) -> int:
@@ -63,8 +81,69 @@ def _print_results(root: Path, results) -> int:
     return 0
 
 
+def _run_undo() -> int:
+    operation = history.load_last_operation()
+    if operation is None:
+        print("No operation available to undo.")
+        return 0
+
+    undo_plan = history.build_undo_plan(operation)
+    root = undo_plan[0].destination.parent
+
+    print("Smart File Organizer\n")
+    _print_undo_preview(root, undo_plan)
+
+    answer = input("Undo these changes? [y/N]: ")
+    if answer.strip().lower() not in ("y", "yes"):
+        print("Operation cancelled. No files were modified.")
+        return 0
+
+    results = execute_moves(undo_plan)
+
+    remaining = [
+        history.HistoryMove(source=result.move.destination, destination=result.move.source)
+        for result in results
+        if not result.success
+    ]
+    if remaining:
+        history.save_remaining_operation(remaining)
+    else:
+        history.clear_history()
+
+    return _print_results(root, results)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+
+    if args.undo:
+        if args.directory is not None:
+            print("Error: --undo cannot be combined with a directory argument.")
+            return 1
+        if args.apply:
+            print(
+                "Error: --undo cannot be combined with --apply "
+                "(undo always previews and confirms on its own)."
+            )
+            return 1
+        if args.by == "date":
+            print(
+                "Error: --undo cannot be combined with --by "
+                "(undo does not reclassify files)."
+            )
+            return 1
+        if args.config:
+            print(
+                "Error: --undo cannot be combined with --config "
+                "(undo does not use classification rules)."
+            )
+            return 1
+        return _run_undo()
+
+    if args.directory is None:
+        print("Error: a directory argument is required unless --undo is given.")
+        return 1
+
     root = Path(args.directory)
 
     if args.by == "date" and args.config:
@@ -118,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     results = execute_moves(plan)
+    history.record_operation(results)
     return _print_results(root, results)
 
 
