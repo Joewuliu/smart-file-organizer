@@ -3,10 +3,9 @@
 import argparse
 from pathlib import Path
 
-from organizer import history
-from organizer.classifier import DEFAULT_RULES, category_names
+from organizer import history, state
+from organizer.classifier import DEFAULT_RULES
 from organizer.config import ConfigError, load_rules
-from organizer.date_organizer import is_date_destination_dir
 from organizer.mover import execute_moves
 from organizer.planner import (
     PlannedMove,
@@ -184,25 +183,14 @@ def main(argv: list[str] | None = None) -> int:
 
     exclude_dir = None
     if args.recursive:
-        if args.by == "date":
-            exclude_dir = is_date_destination_dir
-        elif args.by == "category-date":
-            excluded_categories = category_names(rules)
+        try:
+            managed = state.managed_directories(root)
+        except state.StateError as exc:
+            print(f"Error: {exc}")
+            return 1
 
-            def exclude_dir(relative_path: Path) -> bool:
-                parts = relative_path.parts
-                if len(parts) != 3:
-                    return False
-                category, *date_parts = parts
-                return category in excluded_categories and is_date_destination_dir(
-                    Path(*date_parts)
-                )
-        else:
-            excluded_categories = category_names(rules)
-
-            def exclude_dir(relative_path: Path) -> bool:
-                parts = relative_path.parts
-                return len(parts) == 1 and parts[0] in excluded_categories
+        def exclude_dir(relative_path: Path) -> bool:
+            return relative_path in managed
 
     try:
         files = scan_directory(root, recursive=args.recursive, exclude_dir=exclude_dir)
@@ -239,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
 
     results = execute_moves(plan)
     history.record_operation(results, root)
+    state.record_managed_destinations(results, root)
     return _print_results(root, results)
 
 
