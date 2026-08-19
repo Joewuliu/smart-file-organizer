@@ -1,7 +1,15 @@
+import os
+from datetime import datetime
+
 import pytest
 
 from organizer.classifier import ClassificationRules
-from organizer.planner import PlannedMove, plan_moves
+from organizer.planner import PlannedMove, plan_moves, plan_moves_by_date
+
+
+def _set_mtime(path, year, month, day, hour=12):
+    timestamp = datetime(year, month, day, hour).timestamp()
+    os.utime(path, (timestamp, timestamp))
 
 
 def test_pdf_plans_to_documents(tmp_path):
@@ -189,3 +197,95 @@ def test_planned_move_is_simple_dataclass(tmp_path):
     assert isinstance(move, PlannedMove)
     assert move.source == source
     assert move.category == "Documents"
+
+
+def test_plan_moves_by_date_uses_year_month_destination(tmp_path):
+    source = tmp_path / "report.pdf"
+    source.write_text("data")
+    _set_mtime(source, 2026, 8, 18)
+
+    [move] = plan_moves_by_date([source], tmp_path)
+
+    assert move.category == "2026/08-August"
+    assert move.destination == tmp_path / "2026" / "08-August" / "report.pdf"
+
+
+def test_plan_moves_by_date_multiple_files_same_month(tmp_path):
+    report = tmp_path / "report.pdf"
+    photo = tmp_path / "photo.jpg"
+    report.write_text("data")
+    photo.write_text("data")
+    _set_mtime(report, 2026, 8, 18)
+    _set_mtime(photo, 2026, 8, 3)
+
+    plan = plan_moves_by_date([report, photo], tmp_path)
+
+    assert plan[0].destination == tmp_path / "2026" / "08-August" / "report.pdf"
+    assert plan[1].destination == tmp_path / "2026" / "08-August" / "photo.jpg"
+
+
+def test_plan_moves_by_date_ignores_filename_classification(tmp_path):
+    # bank_statement.pdf would classify as Finance under plan_moves(),
+    # but date mode must not consult filename rules at all.
+    source = tmp_path / "bank_statement.pdf"
+    source.write_text("data")
+    _set_mtime(source, 2026, 8, 18)
+
+    [move] = plan_moves_by_date([source], tmp_path)
+
+    assert move.destination == tmp_path / "2026" / "08-August" / "bank_statement.pdf"
+    assert not (tmp_path / "Finance").exists()
+
+
+def test_plan_moves_by_date_ignores_extension_classification(tmp_path):
+    # photo.jpg would classify as Images under plan_moves(), but date
+    # mode must not consult extension rules at all.
+    source = tmp_path / "photo.jpg"
+    source.write_text("data")
+    _set_mtime(source, 2026, 8, 18)
+
+    [move] = plan_moves_by_date([source], tmp_path)
+
+    assert move.destination == tmp_path / "2026" / "08-August" / "photo.jpg"
+    assert not (tmp_path / "Images").exists()
+
+
+def test_plan_moves_by_date_existing_destination_collision(tmp_path):
+    dest_dir = tmp_path / "2026" / "08-August"
+    dest_dir.mkdir(parents=True)
+    (dest_dir / "report.pdf").write_text("existing")
+
+    source = tmp_path / "report.pdf"
+    source.write_text("new")
+    _set_mtime(source, 2026, 8, 18)
+
+    [move] = plan_moves_by_date([source], tmp_path)
+
+    assert move.destination == dest_dir / "report (1).pdf"
+
+
+def test_plan_moves_by_date_multiple_collisions_increment(tmp_path):
+    dest_dir = tmp_path / "2026" / "08-August"
+    dest_dir.mkdir(parents=True)
+    (dest_dir / "report.pdf").write_text("existing")
+    (dest_dir / "report (1).pdf").write_text("existing")
+
+    source = tmp_path / "report.pdf"
+    source.write_text("new")
+    _set_mtime(source, 2026, 8, 18)
+
+    [move] = plan_moves_by_date([source], tmp_path)
+
+    assert move.destination == dest_dir / "report (2).pdf"
+
+
+def test_plan_moves_by_date_does_not_modify_filesystem(tmp_path):
+    source = tmp_path / "report.pdf"
+    source.write_text("data")
+    _set_mtime(source, 2026, 8, 18)
+
+    plan_moves_by_date([source], tmp_path)
+
+    assert not (tmp_path / "2026").exists()
+    assert source.exists()
+    assert source.read_text() == "data"

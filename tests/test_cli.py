@@ -1,3 +1,6 @@
+import os
+from datetime import datetime
+
 import pytest
 
 from organizer.cli import main
@@ -13,6 +16,11 @@ def _write_config(tmp_path, content, name="rules.toml"):
     path = tmp_path / name
     path.write_text(content)
     return path
+
+
+def _set_mtime(path, year, month, day, hour=12):
+    timestamp = datetime(year, month, day, hour).timestamp()
+    os.utime(path, (timestamp, timestamp))
 
 
 def test_help_usage_shows_installed_command_name(capsys):
@@ -345,4 +353,104 @@ def test_no_config_flag_behaves_exactly_as_before(tmp_path, capsys):
     assert exit_code == 0
     assert "-> Finance\\bank_statement.pdf" in out or "-> Finance/bank_statement.pdf" in out
     assert "-> Images\\photo.jpg" in out or "-> Images/photo.jpg" in out
+
+
+def test_default_by_is_category_mode(tmp_path, capsys):
+    _make_files(tmp_path, ["bank_statement.pdf"])
+
+    exit_code = main([str(tmp_path)])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "-> Finance\\bank_statement.pdf" in out or "-> Finance/bank_statement.pdf" in out
+
+
+def test_explicit_by_category_matches_default(tmp_path, capsys):
+    _make_files(tmp_path, ["bank_statement.pdf"])
+
+    exit_code = main([str(tmp_path), "--by", "category"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "-> Finance\\bank_statement.pdf" in out or "-> Finance/bank_statement.pdf" in out
+
+
+def test_by_date_produces_date_preview(tmp_path, capsys):
+    file = tmp_path / "report.pdf"
+    file.write_text("data")
+    _set_mtime(file, 2026, 8, 18)
+
+    exit_code = main([str(tmp_path), "--by", "date"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    joined_dest = os.path.join("2026", "08-August", "report.pdf")
+    assert f"-> {joined_dest}" in out
+
+
+def test_by_date_dry_run_moves_nothing(tmp_path):
+    file = tmp_path / "report.pdf"
+    file.write_text("data")
+    _set_mtime(file, 2026, 8, 18)
+
+    exit_code = main([str(tmp_path), "--by", "date"])
+
+    assert exit_code == 0
+    assert file.exists()
+    assert not (tmp_path / "2026").exists()
+
+
+def test_by_date_apply_with_confirmation_moves_files(tmp_path, monkeypatch):
+    file = tmp_path / "report.pdf"
+    file.write_text("data")
+    _set_mtime(file, 2026, 8, 18)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    exit_code = main([str(tmp_path), "--by", "date", "--apply"])
+
+    assert exit_code == 0
+    assert (tmp_path / "2026" / "08-August" / "report.pdf").exists()
+    assert not file.exists()
+
+
+def test_by_date_apply_declined_moves_nothing(tmp_path, monkeypatch):
+    file = tmp_path / "report.pdf"
+    file.write_text("data")
+    _set_mtime(file, 2026, 8, 18)
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+
+    exit_code = main([str(tmp_path), "--by", "date", "--apply"])
+
+    assert exit_code == 0
+    assert file.exists()
+    assert not (tmp_path / "2026").exists()
+
+
+def test_by_date_with_config_returns_clear_error_and_moves_nothing(tmp_path, capsys):
+    file = tmp_path / "report.pdf"
+    file.write_text("data")
+    _set_mtime(file, 2026, 8, 18)
+    config = _write_config(
+        tmp_path,
+        """
+[extensions]
+".pdf" = "Documents"
+""",
+    )
+
+    exit_code = main([str(tmp_path), "--by", "date", "--config", str(config), "--apply"])
+
+    out = capsys.readouterr().out
+    assert exit_code != 0
+    assert "Traceback" not in out
+    assert file.exists()
+    assert not (tmp_path / "2026").exists()
+    assert not (tmp_path / "Documents").exists()
+
+
+def test_invalid_by_value_rejected_by_argparse(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        main([str(tmp_path), "--by", "bogus"])
+
+    assert exc_info.value.code != 0
 

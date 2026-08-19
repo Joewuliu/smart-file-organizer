@@ -2,8 +2,10 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from organizer.classifier import DEFAULT_RULES, ClassificationRules, classify_file
+from organizer.date_organizer import date_category_for_file
 
 
 @dataclass
@@ -28,6 +30,31 @@ def _first_free_destination(dest_dir: Path, filename: str, reserved: set[Path]) 
         counter += 1
 
 
+def _plan_with_categorizer(
+    files: list[Path], root: Path, categorize: Callable[[Path], str]
+) -> list[PlannedMove]:
+    """Shared planning loop: category/destination resolution and collision
+    handling, independent of how `categorize` derives a category for a file.
+    """
+    reserved: set[Path] = set()
+    plan: list[PlannedMove] = []
+
+    for source in files:
+        category = categorize(source)
+        dest_dir = root / category
+
+        if dest_dir.exists() and not dest_dir.is_dir():
+            raise NotADirectoryError(
+                f"Category path exists and is not a directory: {dest_dir}"
+            )
+
+        destination = _first_free_destination(dest_dir, source.name, reserved)
+        reserved.add(destination)
+        plan.append(PlannedMove(source=source, destination=destination, category=category))
+
+    return plan
+
+
 def plan_moves(
     files: list[Path], root: Path, rules: ClassificationRules = DEFAULT_RULES
 ) -> list[PlannedMove]:
@@ -43,20 +70,18 @@ def plan_moves(
     non-directory file. Never creates directories, moves files, or
     otherwise touches the filesystem.
     """
-    reserved: set[Path] = set()
-    plan: list[PlannedMove] = []
+    return _plan_with_categorizer(files, root, lambda source: classify_file(source, rules))
 
-    for source in files:
-        category = classify_file(source, rules)
-        dest_dir = root / category
 
-        if dest_dir.exists() and not dest_dir.is_dir():
-            raise NotADirectoryError(
-                f"Category path exists and is not a directory: {dest_dir}"
-            )
+def plan_moves_by_date(files: list[Path], root: Path) -> list[PlannedMove]:
+    """Plan where each file in `files` should move to, organized by
+    modification date instead of category.
 
-        destination = _first_free_destination(dest_dir, source.name, reserved)
-        reserved.add(destination)
-        plan.append(PlannedMove(source=source, destination=destination, category=category))
-
-    return plan
+    Each file is placed at `root / "YYYY/MM-MonthName" / filename`
+    based on its mtime (see `date_organizer.date_category_for_file`);
+    filename and extension classification are not consulted at all.
+    Collision handling, the non-directory-parent check, and the
+    "never touches the filesystem" guarantee are identical to
+    `plan_moves()`.
+    """
+    return _plan_with_categorizer(files, root, date_category_for_file)

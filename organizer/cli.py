@@ -6,7 +6,7 @@ from pathlib import Path
 from organizer.classifier import DEFAULT_RULES
 from organizer.config import ConfigError, load_rules
 from organizer.mover import execute_moves
-from organizer.planner import PlannedMove, plan_moves
+from organizer.planner import PlannedMove, plan_moves, plan_moves_by_date
 from organizer.scanner import scan_directory
 
 
@@ -25,6 +25,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--config",
         help="Path to a TOML file defining custom classification rules "
         "(default: use built-in rules)",
+    )
+    parser.add_argument(
+        "--by",
+        choices=["category", "date"],
+        default="category",
+        help="Organize by rule-based category (default) or by modification date",
     )
     return parser.parse_args(argv)
 
@@ -61,6 +67,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = Path(args.directory)
 
+    if args.by == "date" and args.config:
+        print(
+            "Error: --config cannot be combined with --by date "
+            "(date mode does not use classification rules)."
+        )
+        return 1
+
     rules = DEFAULT_RULES
     if args.config:
         try:
@@ -84,7 +97,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        plan = plan_moves(files, root, rules)
+        if args.by == "date":
+            plan = plan_moves_by_date(files, root)
+        else:
+            plan = plan_moves(files, root, rules)
     except NotADirectoryError as exc:
         print(f"Error: {exc}")
         return 1
