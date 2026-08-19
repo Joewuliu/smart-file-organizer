@@ -83,3 +83,23 @@ def plan_moves_by_date(files: list[Path], root: Path) -> list[PlannedMove]:
     `plan_moves()`.
     """
     return _plan_with_categorizer(files, root, date_category_for_file)
+
+
+def plan_moves_by_category_and_date(
+    files: list[Path], root: Path, rules: ClassificationRules = DEFAULT_RULES
+) -> list[PlannedMove]:
+    """Plan where each file in `files` should move to, organized by
+    both category and modification date.
+
+    Composes `classify_file()` and `date_category_for_file()` rather
+    than reimplementing either: each file is placed at
+    `root / category / "YYYY/MM-MonthName" / filename`. Collision
+    handling, the non-directory-parent check, and the "never touches
+    the filesystem" guarantee are identical to `plan_moves()` and
+    `plan_moves_by_date()`.
+    """
+
+    def categorize(source: Path) -> str:
+        return f"{classify_file(source, rules)}/{date_category_for_file(source)}"
+
+    return _plan_with_categorizer(files, root, categorize)
