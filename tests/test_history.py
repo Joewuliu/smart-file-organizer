@@ -84,7 +84,9 @@ def test_save_remaining_operation_overwrites_history(tmp_path):
     move = PlannedMove(tmp_path / "a.pdf", tmp_path / "Documents" / "a.pdf", "Documents")
     record_operation([MoveResult(move, True)], path)
 
-    remaining = [HistoryMove(source=tmp_path / "b.pdf", destination=tmp_path / "Documents" / "b.pdf")]
+    remaining = [
+        HistoryMove(source=tmp_path / "b.pdf", destination=tmp_path / "Documents" / "b.pdf")
+    ]
     save_remaining_operation(remaining, path)
 
     assert load_last_operation(path).moves == remaining

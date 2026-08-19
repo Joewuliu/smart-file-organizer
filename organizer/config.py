@@ -18,9 +18,7 @@ def _validate_category(category: object, context: str) -> str:
     if category in (".", ".."):
         raise ConfigError(f"{context}: category cannot be '{category}'")
     if "/" in category or "\\" in category:
-        raise ConfigError(
-            f"{context}: category cannot contain a path separator, got {category!r}"
-        )
+        raise ConfigError(f"{context}: category cannot contain a path separator, got {category!r}")
     if Path(category).is_absolute():
         raise ConfigError(f"{context}: category cannot be an absolute path, got {category!r}")
     return category

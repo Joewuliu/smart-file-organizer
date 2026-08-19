@@ -23,7 +23,7 @@ around three rules:
 
 ## Installation
 
-Requires Python 3.10+.
+Requires Python 3.11+.
 
 ```bash
 python -m pip install -e .
@@ -33,7 +33,7 @@ This installs the `smart-organizer` command.
 
 ## Development setup
 
-Install with the `dev` extra to get `pytest`:
+Install with the `dev` extra to get `pytest` and `ruff`:
 
 ```bash
 python -m pip install -e ".[dev]"
@@ -47,6 +47,17 @@ python -m pytest
 
 All filesystem tests use pytest's `tmp_path` fixture — no test ever
 touches a real directory on your machine.
+
+### Quality checks
+
+```bash
+ruff check .            # lint: unused imports, undefined names, obvious mistakes
+ruff format --check .   # verify formatting without changing anything
+ruff format .           # apply formatting, for anyone who wants it
+```
+
+These same checks (plus the test suite) run automatically in CI on
+every push and pull request — see `.github/workflows/ci.yml`.
 
 ## Usage
 

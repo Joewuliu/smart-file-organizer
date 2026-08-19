@@ -180,9 +180,7 @@ def test_successful_apply_reports_moved_count(tmp_path, monkeypatch, capsys):
     assert "Failed: 0" in out
 
 
-def test_partial_failure_reports_failed_count_and_returns_nonzero(
-    tmp_path, monkeypatch, capsys
-):
+def test_partial_failure_reports_failed_count_and_returns_nonzero(tmp_path, monkeypatch, capsys):
     _make_files(tmp_path, ["report.pdf", "photo.jpg"])
     monkeypatch.setattr("builtins.input", lambda prompt: "y")
 
@@ -646,7 +644,9 @@ def test_one_undo_failure_does_not_block_later_moves(tmp_path, monkeypatch):
     assert (tmp_path / "Documents" / "report.pdf").exists()
 
 
-def test_successful_undo_makes_operation_unavailable_for_another_undo(tmp_path, monkeypatch, capsys):
+def test_successful_undo_makes_operation_unavailable_for_another_undo(
+    tmp_path, monkeypatch, capsys
+):
     _make_files(tmp_path, ["report.pdf"])
     monkeypatch.setattr("builtins.input", lambda prompt: "y")
     main([str(tmp_path), "--apply"])
@@ -768,4 +768,3 @@ category = "Payroll"
 
     assert exit_code == 0
     assert (tmp_path / "Payroll" / "march_paystub.pdf").exists()
-

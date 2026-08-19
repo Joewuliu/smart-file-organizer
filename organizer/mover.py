@@ -18,15 +18,11 @@ def _execute_one(move: PlannedMove) -> MoveResult:
         return MoveResult(move, False, f"Source no longer exists: {move.source}")
 
     if move.destination.exists():
-        return MoveResult(
-            move, False, f"Destination already exists: {move.destination}"
-        )
+        return MoveResult(move, False, f"Destination already exists: {move.destination}")
 
     parent = move.destination.parent
     if parent.exists() and not parent.is_dir():
-        return MoveResult(
-            move, False, f"Destination parent is not a directory: {parent}"
-        )
+        return MoveResult(move, False, f"Destination parent is not a directory: {parent}")
 
     try:
         parent.mkdir(parents=True, exist_ok=True)

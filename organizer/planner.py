@@ -44,9 +44,7 @@ def _plan_with_categorizer(
         dest_dir = root / category
 
         if dest_dir.exists() and not dest_dir.is_dir():
-            raise NotADirectoryError(
-                f"Category path exists and is not a directory: {dest_dir}"
-            )
+            raise NotADirectoryError(f"Category path exists and is not a directory: {dest_dir}")
 
         destination = _first_free_destination(dest_dir, source.name, reserved)
         reserved.add(destination)

@@ -71,9 +71,7 @@ def test_result_ordering_matches_plan_ordering(tmp_path):
     files = [tmp_path / f"file{i}.txt" for i in range(3)]
     for f in files:
         f.write_text("data")
-    moves = [
-        PlannedMove(f, tmp_path / "Documents" / f.name, "Documents") for f in files
-    ]
+    moves = [PlannedMove(f, tmp_path / "Documents" / f.name, "Documents") for f in files]
 
     results = execute_moves(moves)
 

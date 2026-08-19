@@ -127,10 +127,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         if args.by == "date":
-            print(
-                "Error: --undo cannot be combined with --by "
-                "(undo does not reclassify files)."
-            )
+            print("Error: --undo cannot be combined with --by (undo does not reclassify files).")
             return 1
         if args.config:
             print(
